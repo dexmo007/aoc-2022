@@ -1,13 +1,18 @@
 from dataclasses import dataclass
-from functools import reduce
 import re
+import os
 
-
-with open('sample.txt') as f:
+with open(os.path.join(os.path.dirname(__file__), 'input.txt')) as f:
     lines = f.readlines()
 
 pattern = re.compile(
     r'^Sensor at x=(-?\d+), y=(-?\d+): closest beacon is at x=(-?\d+), y=(-?\d+)$')
+
+
+def manhattan_distance(p1, p2):
+    x1, y1 = p1
+    x2, y2 = p2
+    return abs(x1 - x2) + abs(y1 - y2)
 
 
 @dataclass
@@ -17,12 +22,13 @@ class Sensor:
     bx: int
     by: int
 
-    def shift(self, shift):
-        x, y = shift
-        self.sx -= x
-        self.sy -= y
-        self.bx -= x
-        self.by -= y
+    @property
+    def b(self):
+        return self.bx, self.by
+
+    @property
+    def s(self):
+        return self.sx, self.sy
 
 
 def parse_sensor(line: str):
@@ -33,25 +39,20 @@ def parse_sensor(line: str):
 
 sensors = [parse_sensor(line) for line in lines if line.strip()]
 
-
-def get_aggr(aggr, accessor):
-    return reduce(lambda acc, cur: aggr(*accessor(cur)) if acc is None else aggr(acc, *accessor(cur)), sensors, None)
-
-
-min_x = get_aggr(min, lambda s: (s.sx, s.bx))
-max_x = get_aggr(max, lambda s: (s.sx, s.bx))
-min_y = get_aggr(min, lambda s: (s.sy, s.by))
-max_y = get_aggr(max, lambda s: (s.sy, s.by))
-
-grid = [['.' for _ in range(max_x - min_x + 1)]
-        for _ in range(max_y - min_y + 1)]
+query_y = 2000000
+no_beacon_locations = set()
 
 for sensor in sensors:
-    sensor.shift((min_x, min_y))
-    grid[sensor.sy][sensor.sx] = 'S'
-    grid[sensor.by][sensor.bx] = 'B'
+    d = manhattan_distance(sensor.s, sensor.b)
+    # sensor does not concern queried row
+    if query_y > sensor.sy + d or query_y < sensor.sy - d:
+        continue
 
-for row in grid:
-    for cell in row:
-        print(cell, end='')
-    print()
+    dx = d - abs(query_y - sensor.sy)
+    for xi in range(dx + 1):
+        if sensor.b != (sensor.sx + xi, query_y):
+            no_beacon_locations.add((sensor.sx + xi, query_y))
+        if sensor.b != (sensor.sx - xi, query_y):
+            no_beacon_locations.add((sensor.sx - xi, query_y))
+
+print(len(no_beacon_locations))
