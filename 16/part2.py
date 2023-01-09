@@ -44,6 +44,9 @@ class Valve:
         connections = ','.join(f"({c.id},{w})" for c, w in self.connections)
         return f"Valve({self.idx},{self.id},flow_rate={self.flow_rate},connections=[{connections}],is_dead_end={self.is_dead_end},is_one_way={self.is_one_way})"
 
+    def __repr__(self) -> str:
+        return self.__str__()
+
     def __lt__(self, other):
         return self.id < other.id
 
@@ -129,44 +132,110 @@ for v in valves:
     distances.append(d)
 
 
-def get_next_targets(current_position: Valve, mask: int, time_left: int) -> list[tuple[Valve, int]]:
-    if not mask or time_left <= 2:
+def get_next_targets(traversers: list[tuple[int, Valve]], current_mask: int) -> list[list[tuple[int, Valve, int]]]:
+    if not current_mask:
         return []
     targets = []
-    i = 0
-    while mask:
-        if mask & 1:
-            d = distances[current_position.idx][i]
-            if d + 1 < time_left:  # walk there, open and use pressure at least once
-                targets.append((valves[i], d))
-        i += 1
-        mask >>= 1
+    any_possible = False
+    for time_left, current in traversers:
+        if time_left <= 2:
+            targets.append([(time_left, None, 0)])
+            continue
+        any_possible = True
+        traverser_targets = []
+        mask = current_mask
+        i = 0
+        while mask:
+            if mask & 1:
+                d = distances[current.idx][i]
+                if d + 1 < time_left:  # walk there, open and use pressure at least once
+                    target = valves[i]
+                    new_time_left = time_left - d - 1
+                    traverser_targets.append((new_time_left, target, new_time_left * target.flow_rate))
+            i += 1
+            mask >>= 1
+        targets.append(traverser_targets)
+    if not any_possible:
+        return []
     return targets
 
 
-max_time = 30
+def get_optimistic_pressure_prognosis(traversers, mask):
+    i = 0
+    pressure = 0
+    q = PriorityQueue()
+    for t, _ in traversers:
+        q.put((-t, t))
+    while mask and not q.empty():
+        if mask & 1:
+            valve = valves[i]
+            _, time_left = q.get()
+            time_left -= 2
+            pressure += valve.flow_rate * time_left
+            if time_left > 2:
+                q.put((-time_left, time_left))
+        i += 1
+        mask >>= 1
+    return pressure
+
+
+def unique_product(left, right, respect_order=True, key=lambda x: x):
+    if respect_order:
+        for l in left:
+            for r in right:
+                lkey = key(l)
+                rkey = key(r)
+                if lkey == rkey:
+                    continue
+                yield (l, r)
+    else:
+        seen = set()
+        for l in left:
+            for r in right:
+                lkey = key(l)
+                rkey = key(r)
+                if lkey == rkey:
+                    continue
+                if (rkey, lkey) in seen:
+                    continue
+                seen.add((lkey, rkey))
+                yield (l, r)
+
+
+max_time = 26
 start_valve = next(v for v in valves if v.id == start_valve_id)
 initial_mask = (2**len(valves)-1) ^ (1 << start_valve.idx)
 
 
-def solve():
+def solve(n_traversers=2):
     max_pressure = 0
-    completed = 0
-    paths = [(max_time, (2**len(valves)-1) ^ (1 << start_valve.idx), start_valve, 0)]
+    traversers = [(max_time, start_valve) for _ in range(n_traversers)]
+    paths = [(traversers, initial_mask, 0)]
     start = time.time()
+    first_run = True
+    n_iterations = 0
     while len(paths) > 0:
-        time_left, mask, current, pressure = paths.pop()
-        next_targets = get_next_targets(current, mask, time_left)
-        if not next_targets:
-            max_pressure = max(max_pressure, pressure)
-            completed += 1
+        n_iterations += 1
+        traversers, mask, pressure = paths.pop()
+        if pressure + get_optimistic_pressure_prognosis(traversers, mask) <= max_pressure:
             continue
-        for target, distance in next_targets:
-            new_time_left = time_left - distance - 1
-            new_pressure = pressure + new_time_left * target.flow_rate
-            paths.append((new_time_left, mask ^ (1 << target.idx), target, new_pressure))
-    print(f"{completed} in {time.time() - start}")
+        next_targets_per_traverser = get_next_targets(traversers, mask)
+        if not next_targets_per_traverser:
+            max_pressure = max(max_pressure, pressure)
+            continue
+        for new_traversers in unique_product(*next_targets_per_traverser, respect_order=not first_run, key=lambda t: t[1]):
+            new_mask = mask
+            new_pressure = pressure
+            new_traverser_states = []
+            for time_left, target, added_pressure in new_traversers:
+                if target is not None:
+                    new_mask ^= 1 << target.idx
+                    new_pressure += added_pressure
+                new_traverser_states.append((time_left, target))
+            paths.append((new_traverser_states, new_mask, new_pressure))
+        first_run = False
 
+    print(f"{n_iterations} iterations in {time.time() - start}")
     print('max_pressure=', max_pressure)
 
 
